@@ -1,0 +1,8 @@
+pandas
+sqlalchemy
+psycopg2-binary
+boto3
+prefect
+python-dotenv
+scikit-learn
+numpy
