@@ -41,8 +41,6 @@ def feature_importance(df, target_col, method="random_forest", random_state=42):
     elif method == "mutual_info":
         mi = mutual_info_regression(X_numeric, y, random_state=random_state)
         importance = pd.Series(mi, index=numeric_cols)
-    else:
-        raise ValueError("method should be 'random_forest' or 'mutual_info'")
 
     return importance.sort_values(ascending=False)
 
@@ -50,24 +48,20 @@ def feature_importance(df, target_col, method="random_forest", random_state=42):
 def missing_values_analysis(df, time_col="date", group_col="site", threshold=0.3):
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     if not numeric_cols:
-        return [], pd.DataFrame(columns=["feature", "overall_missing"])
-
-    drop_features = []
-    if group_col in df.columns:
-        for col in numeric_cols:
-            group_missing_ratios = df.groupby(group_col)[col].apply(lambda x: x.isna().mean())
-            if (group_missing_ratios > threshold).any():
-                drop_features.append(col)
-    else:
-        for col in numeric_cols:
-            if df[col].isna().mean() > threshold:
-                drop_features.append(col)
+        return df.copy(), pd.DataFrame(columns=["feature", "overall_missing"])
 
     missing_summary = pd.DataFrame({
         "feature": numeric_cols,
         "overall_missing": df[numeric_cols].isna().mean().values
     })
-    return drop_features, missing_summary
+
+    df_filled = df.copy()
+    for col in numeric_cols:
+        median_value = df_filled[col].median(skipna=True)
+        if pd.notna(median_value):
+            df_filled[col] = df_filled[col].fillna(median_value)
+
+    return df_filled, missing_summary
 
 
 def detect_outliers(df, group_col="site", threshold=0.05):
@@ -97,22 +91,20 @@ def detect_outliers(df, group_col="site", threshold=0.05):
     return outlier_features
 
 
-# Рекомендации по удалению признаков с учетом пропусков, корреляции, значимости и выбросов
 def suggest_features_to_drop(df, target_col, corr_threshold=0.9, missing_threshold=0.3,
                              importance_threshold=0.01, outlier_threshold=0.05):
+    df_for_analysis, missing_summary = missing_values_analysis(df, threshold=missing_threshold)
+
     correlated_pairs = feature_correlations(df, threshold=corr_threshold)
     corr_drop_features = set([pair[1] for pair in correlated_pairs])
 
-    importance = feature_importance(df, target_col)
+    importance = feature_importance(df_for_analysis, target_col)
     low_importance_features = set(importance[importance < importance_threshold].index)
 
-    missing_drop_features, missing_summary = missing_values_analysis(df, threshold=missing_threshold)
-
-    outlier_drop_features = detect_outliers(df, threshold=outlier_threshold)
+    outlier_drop_features = detect_outliers(df_for_analysis, threshold=outlier_threshold)
 
     suggested_drop = (corr_drop_features
                       .union(low_importance_features)
-                      .union(missing_drop_features)
                       .union(outlier_drop_features)
                       )
 
@@ -132,7 +124,6 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df["alt_lag2"] = df.groupby("site")["alt"].shift(2)
 
     # температурные признаки
-    df["temp_gradient_10_15"] = df["pt10m"] - df["pt15m"]
     df["temp_offset"] = df["ttop"] - df["pt10m"]
 
     # тренд времени
@@ -157,3 +148,16 @@ def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
 
     df_grouped['site'] = sites.values
     return df_grouped
+
+
+def encode_categorical_features(df):
+    categorical_cols = ["region", "ecological_type", "geomorphic_unit", "soil_type"]
+    existing_cols = [col for col in categorical_cols if col in df.columns]
+    if not existing_cols:
+        return df
+
+    encoded = df.copy()
+    for col in existing_cols:
+        encoded[f"{col}_code"] = pd.Categorical(encoded[col]).codes
+
+    return encoded.drop(columns=existing_cols)

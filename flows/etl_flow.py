@@ -3,8 +3,8 @@ from prefect import flow, task
 import config
 
 from transformations.loaders import load_csv
-from transformations.cleaners import clean_numeric, normalize_columns, clean_site_column
-from transformations.transformers import merge_all
+from transformations.cleaners import preprocess_site_dataframe, preprocess_timeseries_dataframe
+from transformations.transformers import merge_all, encode_categorical_as_codes
 from transformations.features import build_features, handle_missing, suggest_features_to_drop
 
 from db.postgres import add_to_postgres, save_to_postgres
@@ -28,35 +28,23 @@ def load_data(data_path: str):
 
 @task
 def preprocess_site(site):
-    site = normalize_columns(site)
-    site = clean_site_column(site)
-
-    site["site"] = (
-        site["site"]
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-        .str.replace(r"[()%]", "", regex=True)
-    )
-    return site
+    return preprocess_site_dataframe(site)
 
 
 @task
 def preprocess_timeseries(df, value_name):
-    df = normalize_columns(df)
-    df = clean_numeric(df)
-
-    df_long = df.melt(id_vars=["year"], var_name="site", value_name=value_name)
-
-    df_long["site"] = df_long["site"].str.strip()
-
-    return df_long
+    return preprocess_timeseries_dataframe(df, value_name)
 
 
 @task
 def merge_data(alt, ttop, pt10, pt15, site):
     df = merge_all(alt, ttop, pt10, pt15, site)
     return df
+
+
+@task
+def encode_categorical_features(df):
+    return encode_categorical_as_codes(df)
 
 
 @task
@@ -67,17 +55,31 @@ def feature_engineering(df):
 
 
 @task
+def drop_selected_features(df):
+    return df.drop(columns=["pt15m", "magtoc", "geomorphic_unit_code"], errors="ignore")
+
+
+@task
+def combine_coordinates(df):
+    if "latitude" in df.columns and "longitude" in df.columns:
+        # географический индекс на основе декартовой нормы координат.
+        df["geo_coord_norm"] = (df["latitude"] ** 2 + df["longitude"] ** 2) ** 0.5
+        df = df.drop(columns=["latitude", "longitude"])
+    return df
+
+
+@task
 def eda(df):
     to_drop, diagnostics = suggest_features_to_drop(
-        df, target_col="permafrost_depth",
+        df, target_col="alt",
         corr_threshold=0.9,
         missing_threshold=0.3,
         importance_threshold=0.01,
         outlier_threshold=0.05
     )
 
-    print("Рекомендуемые признаки для удаления:", to_drop)
-    print("Признаки с выбросами:", diagnostics["outlier_features"])
+    print("Корреляции:", diagnostics["correlated_pairs"])
+    print("Значимость:", diagnostics["importance"])
 
 
 @task
@@ -100,7 +102,11 @@ def load_and_transform_data(data_path: str):
     pt15 = preprocess_timeseries(pt15, "pt15m")
 
     df = merge_data(alt, ttop, pt10, pt15, site)
+    df = encode_categorical_features(df)
 
+    eda(df)
+    df = drop_selected_features(df)
+    df = combine_coordinates(df)
     eda(df)
     df = feature_engineering(df)
     return df
@@ -123,8 +129,8 @@ def append_pipeline():
 if __name__ == "__main__":
     # Однократно загружаем исторические данные при старте приложения.
     initial_pipeline()
-    # Затем запускаем часовой cron для инкрементальной дозагрузки.
+    # Запускаем cron для инкрементальной дозагрузки (по задумке раз в год).
     append_pipeline.serve(
         name="permafrost-etl-append-hourly",
-        cron="*/20 * * * *",
+        cron="*/5 * * * *",
     )
