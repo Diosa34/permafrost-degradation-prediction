@@ -1,4 +1,4 @@
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
 from sklearn.linear_model import LinearRegression
 
 
@@ -18,6 +18,13 @@ def get_model(model_name: str, params: dict):
 
     elif model_name == "linear":
         return LinearRegression(**params)
+
+    elif model_name == "extra_trees":
+        return ExtraTreesRegressor(
+            random_state=42,
+            n_jobs=-1,
+            **params
+        )
 
     else:
         raise ValueError(f"Unknown model: {model_name}")

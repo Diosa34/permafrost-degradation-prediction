@@ -15,7 +15,7 @@ def run_all():
         {
             "model": "rf",
             "params": {
-                "n_estimators": 200,
+                "n_estimators": 50,
                 "max_depth": 20,
             },
         },
@@ -26,6 +26,13 @@ def run_all():
                 "n_estimators": 100,
                 "max_depth": 6,
                 "learning_rate": 0.1,
+            },
+        },
+        {
+            "model": "extra_trees",
+            "params": {
+                "n_estimators": 200,
+                "max_depth": 20,
             },
         },
     ]

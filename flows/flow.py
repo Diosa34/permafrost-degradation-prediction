@@ -8,6 +8,7 @@ from transformations.cleaners import preprocess_site_dataframe, preprocess_times
 from transformations.transformers import merge_all
 from transformations.features import build_features, handle_missing, suggest_features_to_drop, \
     encode_categorical_as_codes
+from ml.dataset import prepare_dataset
 
 from db.postgres import add_to_postgres, save_to_postgres
 
@@ -53,6 +54,7 @@ def encode_categorical_features(df):
 def feature_engineering(df):
     df = build_features(df)
     df = handle_missing(df)
+    df = prepare_dataset(df)
     return df
 
 
