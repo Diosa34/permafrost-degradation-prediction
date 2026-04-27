@@ -7,32 +7,43 @@ def run_all():
         {
             "model": "rf",
             "params": {
-                "n_estimators": 100,
-                "max_depth": 10,
+                "n_estimators": 200,
+                "max_depth": 8,
+                "min_samples_split": 8,
+                "min_samples_leaf": 4,
+                "max_features": "sqrt",
             },
         },
 
         {
             "model": "rf",
             "params": {
-                "n_estimators": 50,
-                "max_depth": 20,
+                "n_estimators": 300,
+                "max_depth": 6,
+                "min_samples_split": 8,
+                "min_samples_leaf": 6,
+                "max_features": "sqrt",
             },
         },
 
         {
             "model": "gboost",
             "params": {
-                "n_estimators": 100,
-                "max_depth": 6,
-                "learning_rate": 0.1,
+                "n_estimators": 420,
+                "max_depth": 2,
+                "learning_rate": 0.05,
+                "subsample": 0.7,
+                "min_samples_leaf": 3,
             },
         },
         {
             "model": "extra_trees",
             "params": {
-                "n_estimators": 200,
-                "max_depth": 20,
+                "n_estimators": 120,
+                "max_depth": 7,
+                "min_samples_split": 8,
+                "min_samples_leaf": 4,
+                "max_features": "sqrt",
             },
         },
     ]

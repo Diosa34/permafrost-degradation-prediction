@@ -1,6 +1,8 @@
 import os
 import joblib
 import mlflow
+from datetime import datetime, timezone
+from uuid import uuid4
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
@@ -33,11 +35,19 @@ def train_experiment(model_name: str, params: dict):
 
         model = get_model(model_name, params)
         model.fit(X_train, y_train)
+        train_preds = model.predict(X_train)
         preds = model.predict(X_test)
 
+        train_metrics = _build_prefixed_metrics("train", evaluate(y_train, train_preds))
         metrics = evaluate(y_test, preds)
         metrics["baseline_mae"] = baseline_mae
-        _log_metrics(metrics)
+        test_metrics = _build_prefixed_metrics("test", metrics)
+
+        all_metrics = {
+            **train_metrics,
+            **test_metrics,
+        }
+        _log_metrics(all_metrics)
 
         _save_common_artifacts(model_name, model, X_train, y_test, preds)
         _save_model_specific_artifacts(model_name, model, X_train, y_train, X_test, y_test, preds)
@@ -45,7 +55,7 @@ def train_experiment(model_name: str, params: dict):
 
         print("\n COMPLETED")
         print("=" * 80)
-        return metrics
+        return all_metrics
 
 
 def _print_run_header(model_name: str):
@@ -75,14 +85,27 @@ def _evaluate_baseline(X_train, y_train, X_test, y_test):
 
 
 def _log_params(model_name: str, params: dict):
-    mlflow.log_param("model", model_name)
-    for key, value in params.items():
-        mlflow.log_param(key, value)
+    mlflow.log_params({"model": model_name, **params})
+    flow_execution_tag = os.getenv("FLOW_EXECUTION_TAG", "manual-run")
+    run_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    mlflow.set_tags({
+        "stage": "training",
+        "project": "permafrost-alt-prediction",
+        "model_family": model_name,
+        "flow_execution_tag": flow_execution_tag,
+        "training_run_tag": f"{flow_execution_tag}-{model_name}-{uuid4().hex[:8]}",
+        "logged_at_utc": run_timestamp,
+    })
 
 
 def _log_metrics(metrics: dict):
-    for key, value in metrics.items():
-        mlflow.log_metric(key, value)
+    numeric_metrics = {key: float(value) for key, value in metrics.items()}
+    mlflow.log_metrics(numeric_metrics)
+
+
+def _build_prefixed_metrics(prefix: str, metrics: dict):
+    return {f"{prefix}_{key}": value for key, value in metrics.items()}
 
 
 def _save_common_artifacts(model_name, model, X_train, y_test, preds):
