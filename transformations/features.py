@@ -117,47 +117,75 @@ def suggest_features_to_drop(df, target_col, corr_threshold=0.9, missing_thresho
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.sort_values(["site", "year"])
+    df = df.sort_values(["site_code", "year"]).copy()
 
-    # лаги
-    df["alt_lag1"] = df.groupby("site")["alt"].shift(1)
-    df["alt_lag2"] = df.groupby("site")["alt"].shift(2)
+    df["alt_lag1"] = df.groupby("site_code")["alt"].shift(1)
+    df["alt_lag2"] = df.groupby("site_code")["alt"].shift(2)
 
-    # температурные признаки
     df["temp_offset"] = df["ttop"] - df["pt10m"]
 
-    # тренд времени
+    # лаги/роллинги
+    for col in ["ttop", "pt10m", "temp_offset"]:
+        if col in df.columns:
+            df[f"{col}_lag1"] = df.groupby("site_code")[col].shift(1)
+            df[f"{col}_lag2"] = df.groupby("site_code")[col].shift(2)
+            # 3-летнее скользящее среднее по прошлым значениям (без утечки будущего)
+            df[f"{col}_roll3"] = (
+                df.groupby("site_code")[col]
+                .shift(1)
+                .rolling(window=3, min_periods=1)
+                .mean()
+            )
+
     df["year_idx"] = df["year"] - df["year"].min()
 
     return df
 
 
 def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.sort_values(["site", "year"])
-    df = df.infer_objects(copy=False)
+    df = df.sort_values(["site_code", "year"]).copy()
 
-    def process_group(group):
-        numeric_cols = group.select_dtypes(include=['number']).columns
-        if not numeric_cols.empty:
-            group[numeric_cols] = group[numeric_cols].interpolate(limit_direction="both")
-        return group
+    lag_cols = [c for c in df.columns if c.endswith("_lag1") or c.endswith("_lag2")]
 
-    sites = df['site']
+    # только прямое заполнение прошлым (ffill).
+    df[lag_cols] = df.groupby("site_code")[lag_cols].transform(lambda x: x.ffill())
 
-    df_grouped = df.drop(columns=['site']).groupby(sites, group_keys=False).apply(process_group)
+    # Для первых лет в каждом site лаги могут оставаться NaN — заполняем текущими значениями
+    if "alt_lag1" in df.columns and "alt" in df.columns:
+        df["alt_lag1"] = df["alt_lag1"].fillna(df["alt"])
+    if "alt_lag2" in df.columns:
+        df["alt_lag2"] = df["alt_lag2"].fillna(df.get("alt_lag1", df.get("alt")))
 
-    df_grouped['site'] = sites.values
-    return df_grouped
+    for base in ["ttop", "pt10m", "temp_offset"]:
+        if f"{base}_lag1" in df.columns and base in df.columns:
+            df[f"{base}_lag1"] = df[f"{base}_lag1"].fillna(df[base])
+        if f"{base}_lag2" in df.columns:
+            df[f"{base}_lag2"] = df[f"{base}_lag2"].fillna(df.get(f"{base}_lag1", df.get(base)))
+
+    numeric_cols = df.select_dtypes(include=["number"]).columns
+    non_lag_cols = [c for c in numeric_cols if c not in lag_cols]
+
+    # медианное заполнение (устойчиво к выбросам)
+    df[non_lag_cols] = df[non_lag_cols].fillna(df[non_lag_cols].median())
+
+    df = df.dropna()
+
+    return df
 
 
-def encode_categorical_features(df):
-    categorical_cols = ["region", "ecological_type", "geomorphic_unit", "soil_type"]
-    existing_cols = [col for col in categorical_cols if col in df.columns]
-    if not existing_cols:
-        return df
-
+def encode_categorical_as_codes(df: pd.DataFrame) -> pd.DataFrame:
     encoded = df.copy()
+
+    if "site" in encoded.columns:
+        encoded["site_code"] = pd.Categorical(encoded["site"]).codes
+        encoded = encoded.drop(columns=["site"])
+
+    categorical_cols = ["region", "ecological_type", "geomorphic_unit", "soil_type"]
+    existing_cols = [col for col in categorical_cols if col in encoded.columns]
+
     for col in existing_cols:
         encoded[f"{col}_code"] = pd.Categorical(encoded[col]).codes
 
-    return encoded.drop(columns=existing_cols)
+    encoded = encoded.drop(columns=existing_cols)
+
+    return encoded

@@ -1,11 +1,13 @@
 from prefect import flow, task
 
 import config
+from ml.experiments import run_all
 
 from transformations.loaders import load_csv
 from transformations.cleaners import preprocess_site_dataframe, preprocess_timeseries_dataframe
-from transformations.transformers import merge_all, encode_categorical_as_codes
-from transformations.features import build_features, handle_missing, suggest_features_to_drop
+from transformations.transformers import merge_all
+from transformations.features import build_features, handle_missing, suggest_features_to_drop, \
+    encode_categorical_as_codes
 
 from db.postgres import add_to_postgres, save_to_postgres
 
@@ -49,8 +51,8 @@ def encode_categorical_features(df):
 
 @task
 def feature_engineering(df):
-    df = handle_missing(df)
     df = build_features(df)
+    df = handle_missing(df)
     return df
 
 
@@ -84,15 +86,15 @@ def eda(df):
 
 @task
 def save_to_db(df):
-    save_to_postgres(df, POSTGRES_URI, TABLE_NAME)
+    save_to_postgres(df, TABLE_NAME)
 
 
 @task
 def append_to_db(df):
-    add_to_postgres(df, POSTGRES_URI, TABLE_NAME)
+    add_to_postgres(df, TABLE_NAME)
 
 
-def load_and_transform_data(data_path: str):
+def data_preprocessing(data_path: str):
     site, alt, ttop, pt10, pt15 = load_data(data_path)
 
     site = preprocess_site(site)
@@ -104,6 +106,10 @@ def load_and_transform_data(data_path: str):
     df = merge_data(alt, ttop, pt10, pt15, site)
     df = encode_categorical_features(df)
 
+    return df
+
+
+def initial_build_features(df):
     eda(df)
     df = drop_selected_features(df)
     df = combine_coordinates(df)
@@ -112,25 +118,39 @@ def load_and_transform_data(data_path: str):
     return df
 
 
+def incremental_build_features(df):
+    df = drop_selected_features(df)
+    df = combine_coordinates(df)
+    df = feature_engineering(df)
+    return df
+
+
 @flow(name="Permafrost ETL initial Pipeline")
 def initial_pipeline():
-    df = load_and_transform_data(INITIAL_DATA_PATH)
-
+    df = data_preprocessing(INITIAL_DATA_PATH)
+    df = initial_build_features(df)
     save_to_db(df)
 
 
 @flow(name="Permafrost ETL append Pipeline")
 def append_pipeline():
-    df = load_and_transform_data(APPEND_DATA_PATH)
-
+    df = data_preprocessing(APPEND_DATA_PATH)
+    df = incremental_build_features(df)
     append_to_db(df)
 
 
+@flow
+def train_pipeline():
+    run_all()
+
+
 if __name__ == "__main__":
-    # Однократно загружаем исторические данные при старте приложения.
+    # Однократно загружаем исторические данные при старте приложения. Если таблицы не пуста, то содержимое заменяется.
     initial_pipeline()
     # Запускаем cron для инкрементальной дозагрузки (по задумке раз в год).
-    append_pipeline.serve(
-        name="permafrost-etl-append-hourly",
-        cron="*/5 * * * *",
-    )
+    # append_pipeline.serve(
+    #     name="permafrost-etl-append-hourly",
+    #     cron="*/5 * * * *",
+    # )
+
+    train_pipeline()

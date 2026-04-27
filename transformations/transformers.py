@@ -15,16 +15,3 @@ def merge_all(alt, ttop, pt10, pt15, site):
             .merge(site, on="site", how="left")
 
     return df
-
-
-def encode_categorical_as_codes(df: pd.DataFrame) -> pd.DataFrame:
-    categorical_cols = ["region", "ecological_type", "geomorphic_unit", "soil_type"]
-    existing_cols = [col for col in categorical_cols if col in df.columns]
-    if not existing_cols:
-        return df
-
-    encoded = df.copy()
-    for col in existing_cols:
-        encoded[f"{col}_code"] = pd.Categorical(encoded[col]).codes
-
-    return encoded.drop(columns=existing_cols)

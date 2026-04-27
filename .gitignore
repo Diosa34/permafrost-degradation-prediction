@@ -3,3 +3,17 @@
 .env
 prefect.db
 *.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# OS / editor temp files
+*~
+*.csv~
+
+# ML / experiment artifacts
+artifacts/
+models/
+mlruns/
